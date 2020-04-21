@@ -111,6 +111,11 @@ venv.bak/
 .idea
 playground
 bfg.jar
-profiling
 .coverage
 report.xml
+
+profiling/data/**/*
+!profiling/data/**/.gitkeep
+profiling/data/**/*.parquet
+profiling/data/**/*.csv
+profiling/results/*.json
