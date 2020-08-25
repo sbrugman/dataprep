@@ -17,7 +17,7 @@ from .config_manager import config_directory, ensure_config
 from .errors import RequestError, UniversalParameterOverridden, InvalidParameterError
 from .implicit_database import ImplicitDatabase, ImplicitTable
 from .int_ref import IntRef
-from .throttler import OrderedThrottler, ThrottleSession
+from .throttler import Throttler, OrderedThrottleSession
 
 INFO_TEMPLATE = Template(
     """{% for tb in tbs.keys() %}
@@ -90,7 +90,7 @@ class Connector:
         self._auth = _auth or {}
         self._concurrency = _concurrency
         self._jenv = Environment(undefined=StrictUndefined)
-        self._throttler = OrderedThrottler(_concurrency)
+        self._throttler = Throttler(_concurrency)
 
     async def query(  # pylint: disable=too-many-locals
         self,
@@ -217,7 +217,7 @@ class Connector:
             raise RuntimeError("_count should be larger than 0")
 
         async with ClientSession() as client:
-            throttler = self._throttler.session()
+            throttler = self._throttler.ordered()
 
             if itable.pag_params is None or _count is None:
                 df = await self._fetch(
@@ -297,7 +297,7 @@ class Connector:
         kwargs: Dict[str, Any],
         *,
         _client: ClientSession,
-        _throttler: ThrottleSession,
+        _throttler: OrderedThrottleSession,
         _page: int = 0,
         _allowed_page: Optional[IntRef] = None,
         _count: Optional[int] = None,
@@ -362,29 +362,30 @@ class Connector:
                 raise UniversalParameterOverridden(cursor_key, "_cursor")
             req_data["params"][cursor_key] = _cursor
 
-        await _throttler.acquire(_page)
+        async with _throttler.acquire(_page) as cancel:
 
-        if _allowed_page is not None and int(_allowed_page) <= _page:
-            # cancel current throttler counter since the request is not sent out
-            _throttler.release()
-            return None
-
-        async with _client.request(
-            method=method,
-            url=url,
-            headers=req_data["headers"],
-            params=req_data["params"],
-            json=req_data.get("json"),
-            data=req_data.get("data"),
-            cookies=req_data["cookies"],
-        ) as resp:
-            if resp.status != 200:
-                raise RequestError(status_code=resp.status, message=await resp.text())
-            content = await resp.text()
-            df = table.from_response(content)
-
-            if len(df) == 0 and _allowed_page is not None and _page is not None:
-                _allowed_page.set(_page)
+            if _allowed_page is not None and int(_allowed_page) <= _page:
+                # cancel current throttler counter since the request is not sent out
+                cancel()
                 return None
-            else:
-                return df
+
+            async with _client.request(
+                method=method,
+                url=url,
+                headers=req_data["headers"],
+                params=req_data["params"],
+                json=req_data.get("json"),
+                data=req_data.get("data"),
+                cookies=req_data["cookies"],
+            ) as resp:
+                if resp.status != 200:
+                    raise RequestError(
+                        status_code=resp.status, message=await resp.text()
+                    )
+                df = table.from_response(await resp.text())
+
+                if len(df) == 0 and _allowed_page is not None and _page is not None:
+                    _allowed_page.set(_page)
+                    return None
+                else:
+                    return df
