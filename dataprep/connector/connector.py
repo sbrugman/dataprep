@@ -291,6 +291,9 @@ class Connector:
 
         return df
 
+    # TODO: add an asyncio.Event to the class, and enable it by default.
+    # TODO: once the we meet the 429 error, reset the Event so other tasks
+    # TODO: will be blocked on the Event.
     async def _fetch(  # pylint: disable=too-many-locals,too-many-branches
         self,
         table: ImplicitTable,
@@ -369,6 +372,10 @@ class Connector:
                 cancel()
                 return None
 
+            # TODO: put the following code into a for loop
+            # TODO: wait on the Event
+            # TODO: detect resp.status, if 429, reset Event,
+            # TODO: spawn a task to enable the Event with exponential backoff, continue the loop
             async with _client.request(
                 method=method,
                 url=url,
