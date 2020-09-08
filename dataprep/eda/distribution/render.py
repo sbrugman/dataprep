@@ -1477,8 +1477,8 @@ def format_cat_stats(
     ov_stats = {k: _format_values(k, v) for k, v in ov_stats.items()}
     len_stats = {k: _format_values(k, v) for k, v in len_stats.items()}
     smpl = {k: f"{v[:18]}..." if len(v) > 18 else v for k, v in smpl.items()}
-    letter_stats = {k: _format_values(k, v) for k, v in letter_stats.items()}
-
+    # letter_stats = {k: _format_values(k, v) for k, v in letter_stats.items()}
+    letter_stats = {}
     return ov_stats, len_stats, smpl, letter_stats
 
 
@@ -1662,10 +1662,10 @@ def render_cat(
     tabs.append(Panel(child=row(fig), title="Bar Chart"))
     tabs.append(pie_viz(pie, nrows, col, plot_width, plot_height))
     # word counts and total number of words for the wordcloud and word frequencies bar chart
-    word_cnts, nwords, = data["word_cnts"], data["nwords"]
-    if nwords > 0:
-        tabs.append(wordcloud_viz(word_cnts, plot_width, plot_height))
-        tabs.append(wordfreq_viz(word_cnts, nwords, plot_width, plot_height, True))
+    # word_cnts, nwords, = data["word_cnts"], data["nwords"]
+    # if nwords > 0:
+    #     tabs.append(wordcloud_viz(word_cnts, plot_width, plot_height))
+    #     tabs.append(wordfreq_viz(word_cnts, nwords, plot_width, plot_height, True))
     # word length histogram
     length_dist = hist_viz(
         data["len_hist"], nrows, "Word Length", yscale, plot_width, plot_height, True
@@ -1717,36 +1717,36 @@ def nom_insights(data: Dict[str, Any], col: str) -> Dict[str, List[str]]:
         ins["bar"].append(f"{col} is relatively evenly distributed")
 
     ## if cfg.insight.outstanding_no1_enable
-    factor = data["bar"][0] / data["bar"][1] if len(data["bar"]) > 1 else 0
-    if factor > 1.5:
-        val1, val2 = data["bar"].index[0], data["bar"].index[1]
-        ins["bar"].append(
-            f"The largest value ({val1}) is over {factor} times larger than the second largest value ({val2})"
-        )
+    # factor = data["bar"][0] / data["bar"][1] if len(data["bar"]) > 1 else 0
+    # if factor > 1.5:
+    #     val1, val2 = data["bar"].index[0], data["bar"].index[1]
+    #     ins["bar"].append(
+    #         f"The largest value ({val1}) is over {factor} times larger than the second largest value ({val2})"
+    #     )
 
     ## if cfg.insight.attribution_enable
-    if data["pie"][:2].sum() / data["nrows"] > 0.5 and len(data["pie"]) >= 2:
-        vals = ", ".join(data["pie"].index[i] for i in range(2))
-        ins["pie"].append(f"The top 2 categories ({vals}) take over 50%")
+    # if data["pie"][:2].sum() / data["nrows"] > 0.5 and len(data["pie"]) >= 2:
+    #     vals = ", ".join(data["pie"].index[i] for i in range(2))
+    #     ins["pie"].append(f"The top 2 categories ({vals}) take over 50%")
 
     ## if cfg.insight.high_word_cardinlaity_enable
-    if data["nwords"] > 1000:
-        nwords = data["nwords"]
-        ins["cloud"].append(f"{col} contains many words: {nwords} words")
+    # if data["nwords"] > 1000:
+    #     nwords = data["nwords"]
+    #     ins["cloud"].append(f"{col} contains many words: {nwords} words")
 
     ## if cfg.insight.outstanding_no1_word_enable
-    factor = (
-        data["word_cnts"][0] / data["word_cnts"][1] if len(data["word_cnts"]) > 1 else 0
-    )
-    if factor > 1.5:
-        val1, val2 = data["word_cnts"].index[0], data["word_cnts"].index[1]
-        ins["wf"].append(
-            f"The largest value ({val1}) is over {factor} times larger than the second largest value ({val2})"
-        )
+    # factor = (
+    #     data["word_cnts"][0] / data["word_cnts"][1] if len(data["word_cnts"]) > 1 else 0
+    # )
+    # if factor > 1.5:
+    #     val1, val2 = data["word_cnts"].index[0], data["word_cnts"].index[1]
+    #     ins["wf"].append(
+    #         f"The largest value ({val1}) is over {factor} times larger than the second largest value ({val2})"
+    #     )
 
     ## if cfg.insight.constant_word_length_enable
-    if data["len_stats"]["Minimum"] == data["len_stats"]["Maximum"]:
-        ins["wf"].append(f"{col} has words of constant length")
+    # if data["len_stats"]["Minimum"] == data["len_stats"]["Maximum"]:
+    #     ins["wf"].append(f"{col} has words of constant length")
 
     return ins
 
@@ -1768,24 +1768,24 @@ def render_num(
     )
     tabs.append(Panel(child=row(fig), title="Histogram"))
     # kde and q-q normal
-    if data["kde"] is not None:
-        dens, kde = data["dens"], data["kde"]
-        tabs.append(kde_viz(dens, kde, col, yscale, plot_width, plot_height))
-    if data["qntls"].any():
-        qntls, mean, std = data["qntls"], data["mean"], data["std"]
-        tabs.append(qqnorm_viz(qntls, mean, std, col, plot_width, plot_height))
+    # if data["kde"] is not None:
+    #     dens, kde = data["dens"], data["kde"]
+    #     tabs.append(kde_viz(dens, kde, col, yscale, plot_width, plot_height))
+    # if data["qntls"].any():
+    #     qntls, mean, std = data["qntls"], data["mean"], data["std"]
+    #     tabs.append(qqnorm_viz(qntls, mean, std, col, plot_width, plot_height))
     # box plot
-    box_data = {
-        "grp": col,
-        "q1": data["qrtl1"],
-        "q2": data["qrtl2"],
-        "q3": data["qrtl3"],
-        "lw": data["lw"],
-        "uw": data["uw"],
-        "otlrs": [data["otlrs"]],
-    }
-    df = pd.DataFrame(box_data, index=[0])
-    tabs.append(box_viz(df, col, plot_width, plot_height))
+    # box_data = {
+    #     "grp": col,
+    #     "q1": data["qrtl1"],
+    #     "q2": data["qrtl2"],
+    #     "q3": data["qrtl3"],
+    #     "lw": data["lw"],
+    #     "uw": data["uw"],
+    #     "otlrs": [data["otlrs"]],
+    # }
+    # df = pd.DataFrame(box_data, index=[0])
+    # tabs.append(box_viz(df, col, plot_width, plot_height))
     tabs = Tabs(tabs=tabs)
     # insights
     cont_insights(data, col)
@@ -1825,8 +1825,8 @@ def cont_insights(data: Dict[str, Any], col: str) -> Dict[str, List[str]]:
         ins["stat"].append(f"{col} has {nzero} ({pzero}%) zeros")
 
     ## if cfg.insight.normal_enable:
-    if data["norm"][1] > 0.99:
-        ins["hist"].append(f"{col} is normally distributed")
+    # if data["norm"][1] > 0.99:
+    #     ins["hist"].append(f"{col} is normally distributed")
 
     ## if cfg.insight.uniform_enable:
     if data["chisq"][1] > 0.999:  ## cfg.insight.uniform_threshold
@@ -1840,14 +1840,14 @@ def cont_insights(data: Dict[str, Any], col: str) -> Dict[str, List[str]]:
         ins["hist"].append(f"{col} is skewed left (\u03B31 = {skw})")
 
     ## if cfg.insight.normal_enable:
-    if data["norm"][1] <= 0.01:
-        pval = data["norm"][1]
-        ins["qq"].append(f"{col} is not normally distributed (p-value {pval})")
+    # if data["norm"][1] <= 0.01:
+    #     pval = data["norm"][1]
+    #     ins["qq"].append(f"{col} is not normally distributed (p-value {pval})")
 
     ## if cfg.insight.box_enable
-    if data["notlrs"] > 0:
-        notlrs = data["notlrs"]
-        ins["box"].append(f"{col} has {notlrs} outliers")
+    # if data["notlrs"] > 0:
+    #     notlrs = data["notlrs"]
+    #     ins["box"].append(f"{col} has {notlrs} outliers")
 
     return ins
 
