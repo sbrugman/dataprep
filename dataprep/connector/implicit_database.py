@@ -55,10 +55,9 @@ class Pagination:
 
 
 class ImplicitTable:  # pylint: disable=too-many-instance-attributes
-    """
-    ImplicitTable class abstracts the request and the response to a Restful API,
-    so that the remote API can be treated as a database table.
-    """
+    """ImplicitTable class abstracts the request and the response
+    to a Restful API, so that the remote API can be treated as a database
+    table."""
 
     name: str
     config: Dict[str, Any]
@@ -246,7 +245,7 @@ class ImplicitDatabase:
                 # ignore meta file
                 continue
             if table_config_path.suffix != ".json":
-                # ifnote non json file
+                # ignote non json file
                 continue
 
             with open(table_config_path) as f:

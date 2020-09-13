@@ -17,7 +17,6 @@ class AuthorizationType(Enum):
 
     Note
     ----
-
     * Bearer: requires 'access_token' presented in user params
         - added as an Auth Header
     * QueryParam: requires 'access_token' presented in user params
