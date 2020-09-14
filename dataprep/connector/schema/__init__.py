@@ -19,4 +19,4 @@ def parse_config(config: Dict[str, Any]) -> ConfigDef:
         config, CONFIG_SCHEMA
     )  # This will throw errors if validate failed
 
-    return ConfigDef.from_dict(config)
+    return ConfigDef.from_value(config)

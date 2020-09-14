@@ -1,6 +1,6 @@
-from typing import Any, Dict, NamedTuple, Union
+from typing import Any, Dict, Union, Optional
 
-from stringcase import camelcase, snakecase
+from stringcase import camelcase
 
 
 class DefBase:
@@ -10,16 +10,26 @@ class DefBase:
             for a in dir(self)
             if not a.startswith("__") and not callable(getattr(self, a))
         ]
-        return {camelcase(attr): to_value(getattr(self, attr)) for attr in attrs}
+        return {
+            camelcase(attr): to_value(getattr(self, attr))
+            for attr in attrs
+            if getattr(self, attr) is not None
+        }
+
+    def __str__(self) -> str:
+        return str(self.to_value())
+
+    def __repr__(self) -> str:
+        return str(self)
 
 
 def to_value(v: Any) -> Any:
     if isinstance(v, (bool, int, float, str)):
         return v
     elif isinstance(v, dict):
-        return {camelcase(key): to_value(value) for key, value in v.items()}
+        return {key: to_value(value) for key, value in v.items()}
     elif isinstance(v, list):
-        return [to_value(value) for value in v]
+        return [value for value in v]
     elif isinstance(v, DefBase):
         return v.to_value()
     else:
@@ -31,21 +41,23 @@ class CannotParseError(Exception):
 
 
 class PaginationDef(DefBase):
+    # __slots__ = ("type", "max_count", "offset_key", "limit_key", "seek_id", "seek_key")
+
     type: str
     max_count: int
-    offset_key: str
+    offset_key: Optional[str]
     limit_key: str
-    seek_id: str
-    seek_key: str
+    seek_id: Optional[str]
+    seek_key: Optional[str]
 
     def __init__(
         self,
         type: str,
         max_count: int,
-        offset_key: str,
+        offset_key: Optional[str],
         limit_key: str,
-        seek_id: str,
-        seek_key: str,
+        seek_id: Optional[str],
+        seek_key: Optional[str],
     ) -> None:
         super().__init__()
 
@@ -62,10 +74,10 @@ class PaginationDef(DefBase):
             return cls(
                 type=d["type"],
                 max_count=d["maxCount"],
-                offset_key=d["offsetKey"],
+                offset_key=d.get("offsetKey"),
                 limit_key=d["limitKey"],
-                seek_id=d["seekId"],
-                seek_key=d["seekKey"],
+                seek_id=d.get("seekId"),
+                seek_key=d.get("seekKey"),
             )
         else:
             raise CannotParseError
@@ -75,18 +87,20 @@ FieldDef = Union[str, bool, "FullFieldDef"]
 
 
 class FullFieldDef(DefBase):
+    # __slots__ = ("required", "from_key", "to_key", "template", "remove_if_empty")
+
     required: bool
-    from_key: str
-    to_key: str
-    template: str
+    from_key: Optional[str]
+    to_key: Optional[str]
+    template: Optional[str]
     remove_if_empty: bool
 
     def __init__(
         self,
         required: bool,
-        from_key: str,
-        to_key: str,
-        template: str,
+        from_key: Optional[str],
+        to_key: Optional[str],
+        template: Optional[str],
         remove_if_empty: bool,
     ) -> None:
         super().__init__()
@@ -102,9 +116,9 @@ class FullFieldDef(DefBase):
         if isinstance(d, dict):
             return cls(
                 required=d["required"],
-                from_key=d["fromKey"],
-                to_key=d["toKey"],
-                template=d["template"],
+                from_key=d.get("fromKey"),
+                to_key=d.get("toKey"),
+                template=d.get("template"),
                 remove_if_empty=d["removeIfEmpty"],
             )
         else:
@@ -128,6 +142,8 @@ AuthorizationDef = Union[
 
 
 class OAuth2AuthorizationDef(DefBase):
+    # __slots__ = ("grant_type", "token_server_url")
+
     grant_type: str
     token_server_url: str
 
@@ -149,6 +165,8 @@ class OAuth2AuthorizationDef(DefBase):
 
 
 class QueryParamAuthorizationDef(DefBase):
+    # __slots__ = ("key_param",)
+
     key_param: str
 
     def __init__(self, key_param: str):
@@ -178,17 +196,22 @@ class BearerAuthorizationDef(DefBase):
 
 
 def parse_authorization(d: Any) -> AuthorizationDef:
-    if d["type"] == "Bearer":
+    if isinstance(d, dict):
+        if d["type"] == "OAuth2":
+            return OAuth2AuthorizationDef.from_value(d)
+        elif d["type"] == "QueryParam":
+            return QueryParamAuthorizationDef.from_value(d)
+        else:
+            raise ValueError(f"Unknown authorization type {d['type']}")
+    elif isinstance(d, str):
         return BearerAuthorizationDef.from_value(d)
-    elif d["type"] == "OAuth2":
-        return OAuth2AuthorizationDef.from_value(d)
-    elif d["type"] == "QueryParam":
-        return QueryParamAuthorizationDef.from_value(d)
     else:
-        raise ValueError(f"Unknown authorization type {d['type']}")
+        raise CannotParseError
 
 
 class BodyDef(DefBase):
+    # __slots__ = ("ctype", "content")
+
     ctype: str
     content: Dict[str, FieldDef]
 
@@ -210,25 +233,36 @@ class BodyDef(DefBase):
 
 
 class RequestDef(DefBase):
+    # __slots__ = (
+    #     "url",
+    #     "method",
+    #     "authorization",
+    #     "headers",
+    #     "params",
+    #     "pagination",
+    #     "body",
+    #     "cookies",
+    # )
+
     url: str
     method: str
-    authorization: AuthorizationDef
-    headers: Dict[str, FieldDef]
+    authorization: Optional[AuthorizationDef]
+    headers: Optional[Dict[str, FieldDef]]
     params: Dict[str, FieldDef]
-    pagination: PaginationDef
-    body: BodyDef
-    cookies: Dict[str, FieldDef]
+    pagination: Optional[PaginationDef]
+    body: Optional[BodyDef]
+    cookies: Optional[Dict[str, FieldDef]]
 
     def __init__(
         self,
         url: str,
         method: str,
-        authorization: AuthorizationDef,
-        headers: Dict[str, FieldDef],
+        authorization: Optional[AuthorizationDef],
+        headers: Optional[Dict[str, FieldDef]],
         params: Dict[str, FieldDef],
-        pagination: PaginationDef,
-        body: BodyDef,
-        cookies: Dict[str, FieldDef],
+        pagination: Optional[PaginationDef],
+        body: Optional[BodyDef],
+        cookies: Optional[Dict[str, FieldDef]],
     ) -> None:
         self.url = url
         self.method = method
@@ -245,33 +279,41 @@ class RequestDef(DefBase):
             return cls(
                 url=d["url"],
                 method=d["method"],
-                authorization=parse_authorization(d["authorization"]),
-                headers={
-                    key: parse_field(value) for key, value in d["headers"].items()
-                },
+                authorization=parse_authorization(d["authorization"])
+                if "authorization" in d
+                else None,
+                headers={key: parse_field(value) for key, value in d["headers"].items()}
+                if "headers" in d
+                else None,
                 params={key: parse_field(value) for key, value in d["params"].items()},
-                pagination=PaginationDef.from_dict(d["pagination"]),
-                body=BodyDef.from_dict(d["body"]),
-                cookies={
-                    key: parse_field(value) for key, value in d["cookies"].items()
-                },
+                pagination=PaginationDef.from_value(d["pagination"])
+                if "pagination" in d
+                else None,
+                body=BodyDef.from_value(d["body"]) if "body" in d else None,
+                cookies={key: parse_field(value) for key, value in d["cookies"].items()}
+                if "cookies" in d
+                else None,
             )
         else:
             raise CannotParseError
 
 
-class SchemaDef(DefBase):
+class SchemaFieldDef(DefBase):
+    # __slots__ = ("target", "type", "description")
+
     target: str
     type: str
-    description: str
+    description: Optional[str]
 
-    def __init__(self, target: str, type: str, description: str,) -> None:
+    def __init__(
+        self, target: str, type: str, description: Optional[str] = None
+    ) -> None:
         self.target = target
         self.type = type
         self.description = description
 
     @classmethod
-    def from_value(cls, d: Any) -> "SchemaDef":
+    def from_value(cls, d: Any) -> "SchemaFieldDef":
         if isinstance(d, dict):
             return cls(**d)
         else:
@@ -279,13 +321,19 @@ class SchemaDef(DefBase):
 
 
 class ResponseDef(DefBase):
+    # __slots__ = ("ctype", "table_path", "schema", "orient")
+
     ctype: str
     table_path: str
-    schema: SchemaDef
+    schema: Dict[str, SchemaFieldDef]
     orient: str
 
     def __init__(
-        self, ctype: str, table_path: str, schema: SchemaDef, orient: str
+        self,
+        ctype: str,
+        table_path: str,
+        schema: Dict[str, SchemaFieldDef],
+        orient: str,
     ) -> None:
         self.ctype = ctype
         self.table_path = table_path
@@ -297,8 +345,11 @@ class ResponseDef(DefBase):
         if isinstance(d, dict):
             return cls(
                 ctype=d["ctype"],
-                table_path=d["table_path"],
-                schema=SchemaDef.from_dict(d["schema"]),
+                table_path=d["tablePath"],
+                schema={
+                    key: SchemaFieldDef.from_value(value)
+                    for key, value in d["schema"].items()
+                },
                 orient=d["orient"],
             )
         else:
@@ -306,6 +357,8 @@ class ResponseDef(DefBase):
 
 
 class ConfigDef(DefBase):
+    # __slots__ = ("version", "request", "response")
+
     version: int
     request: RequestDef
     response: ResponseDef
@@ -318,12 +371,12 @@ class ConfigDef(DefBase):
         self.response = response
 
     @classmethod
-    def from_dict(cls, d: Any) -> "ConfigDef":
+    def from_value(cls, d: Any) -> "ConfigDef":
         if isinstance(d, dict):
             return cls(
                 version=d["version"],
-                request=RequestDef.from_dict(d["request"]),
-                response=ResponseDef.from_dict(d["response"]),
+                request=RequestDef.from_value(d["request"]),
+                response=ResponseDef.from_value(d["response"]),
             )
         else:
             raise CannotParseError
