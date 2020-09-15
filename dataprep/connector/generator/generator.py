@@ -1,191 +1,173 @@
 """This module implements the generation of connector configuration files."""
 
-import re
-import json
-from urllib import parse
-from requests import Request, Response, Session
+from pathlib import Path
+from typing import Any, Dict, Optional, Union
+from urllib.parse import parse_qs, urlparse, urlunparse
 
-# pylint: disable=too-many-instance-attributes
+import requests
+
+from ..schema import (
+    AuthorizationDef,
+    CannotParseError,
+    ConfigDef,
+    parse_config,
+    PaginationDef,
+)
+from .state import ConfigState
+from .table import gen_schema_from_path, search_table_path
+
+# class Example(TypedDict):
+#     url: str
+#     method: str
+#     params: Dict[str, str]
+#     authorization: Tuple[Dict[str, Any], Dict[str, Any]]
+#     pagination: Dict[str, Any]
+
+
 class ConfigGenerator:
-    """
-    Class that generate configuration files according to
-    input information provided by the user, for example
-    an HTTP request example from a REST API.
+    """Config Generator.
 
-    Example
-    -------
-    >>> from dataprep.connector import config_generator as cg
-    >>> req_example = "GET https://openlibrary.org/api/books?bibkeys=ISBN:0385472579&format=json"
-    >>> config = cg.create_config(req_example)
+    Parameters
+    ----------
+    config
+        Initialize the config generator with existing config file.
 
     """
 
-    _request_example: str
-    _url: str
-    _parameters: dict
-    _content_type: str
-    _table_path: str
-    _version: int
-    _request: dict
-    _response: dict
-    _method: str
-    _schema_cols: list
-    _headers: dict
-    _orient: str
-    _session: Session
-    _config: str
+    config: ConfigState
 
-    def __init__(self) -> None:
-        self._request_example = str()
-        self._url = str()
-        self._parameters = dict()
-        self._content_type = str()
-        self._table_path = "$[*]"
-        self._version = 1
-        self._request = dict()
-        self._response = dict()
-        self._method = "GET"
-        self._schema_cols = list()
-        self._headers = dict()
-        self._orient = "records"
-        self._session = Session()
-        self._config = str()
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        if config is None:
+            self.config = ConfigState(None)
+        else:
+            self.config = ConfigState(parse_config(config))
 
-    def add_example(self, request_example: str) -> "ConfigGenerator":
-        """Parse the request example, execute the request, create the in-memory
-        representation of a configuration file and returns the corresponding
-        ConfigGenerator object.
+    def add_example(
+        self, example: Dict[str, Any]
+    ) -> None:  # pylint: disable=too-many-locals
+        """Add an example to the generator. The example
+        should be in the dictionary format.
+
+        class Example(TypedDict):
+            url: str
+            method: str
+            params: Dict[str, str]
+            # 0 for def and 1 for params
+            authorization: Optional[Tuple[Dict[str, Any], Dict[str, Any]]]
+            pagination: Optional[Dict[str, Any]]
 
         Parameters
         ----------
-        request_example
-            The HTTP request example, e.g.:
-            GET https://openlibrary.org/api/books?bibkeys=ISBN:0385472579&format=json
+        req_example
+            The request example.
+        """
+        url = example["url"]
+        method = example["method"]
+        if method not in {"POST", "GET", "PUT"}:
+            raise ValueError(f"{method} not allowed.")
+        if method != "GET":
+            raise NotImplementedError(f"{method} not implemented.")
 
-        Returns
-        -------
-        ConfigGenerator
-            The ConfigGenerator instance created from the request example.
-        """
+        params = example.get("params", {})
 
-        self._parse_example(request_example)
-        self._execute_request()
-        self._create_config_file_representation()
-        return self
+        # Move url params to params
+        parsed = urlparse(url)
 
-    def _parse_example(self, request_example: str) -> None:
-        """
-        Parse the request example extracting all the relevant information to perform
-        a request.
+        query_string = parse_qs(parsed.query)
+        for key, (val, *_) in query_string.items():
+            if key in params and params[key] != val:
+                raise ValueError(
+                    f"{key} appears in both url and params, but have different values."
+                )
+            params[key] = val
 
-        Parameters
-        ----------
-        request_example
-            The HTTP request example, for example:
-            GET https://openlibrary.org/api/books?bibkeys=ISBN:0385472579&format=json
-        """
-        self._request_example = request_example
-        try:
-            request_full_url = re.search(
-                "(?P<url>https?://[^\s]+)", self._request_example
-            ).group("url")
-        except Exception:
-            raise RuntimeError(
-                f"Malformed request example syntax: \
-                               {self._request_example}"
-            ) from None
-        else:
-            parsed_full_url = parse.urlparse(request_full_url)
-            self._parameters = parse.parse_qs(parsed_full_url.query)
-            if len(self._parameters) != 0:
-                lst_parsed_full_url = list(parsed_full_url)
-                lst_parsed_full_url[4] = str()
-                self._url = parse.urlunparse(lst_parsed_full_url)
-            else:
-                raise RuntimeError(
-                    f"Malformed request example syntax: \
-                                   {self._request_example}"
-                ) from None
-
-    def _execute_request(self) -> None:
-        """
-        Execute an HTTP request taking as input all the parameters extracted from
-        the request example, then, extract all the relevant information from the
-        received HTTP response.
-        """
-        request = Request(
-            method=self._method,
-            url=self._url,
-            headers=self._headers,
-            params=self._parameters,
-            json=None,
-            data=None,
-            cookies=dict(),
-        )
-        prep_request = request.prepare()
-        resp: Response = self._session.send(prep_request)
-        if resp.status_code == 200:
-            self._content_type = resp.headers["content-type"]
-            try:
-                self._response = resp.json()
-            except ValueError:
-                raise RuntimeError(
-                    f"Response body from {self._url} \
-                                   does not contain a valid JSON."
-                ) from None
-        else:
-            raise RuntimeError(
-                f"HTTP status received: {resp.status_code}. \
-                                Expected: 200."
-            ) from None
-
-    def _create_config_file_representation(self) -> None:
-        """
-        Creates an in-memory representation (string) of a configuration file.
-        """
-        if len(self._response) == 0:
-            self._schema_cols = list()
-        else:
-            self._schema_cols = list(dict(list(self._response.values())[0]).keys())
-        config = {
-            "version": self._version,
-            "request": {
-                "url": self._url,
-                "method": self._method,
-                "params": {p: False for p in self._parameters},
-            },
-            "response": {
-                "ctype": "application/json",
-                "tablePath": self._table_path,
-                "schema": {
-                    sc: {"target": "$." + sc, "type": "string"}
-                    for sc in self._schema_cols
-                },
-                "orient": self._orient,
-            },
+        url = urlunparse((*parsed[:4], "", *parsed[5:]))
+        req = {
+            "method": method,
+            "url": url,
+            "headers": {},
+            "params": params,
         }
-        self._config = json.dumps(config, indent=4)
 
-    def save(self, filename: str) -> None:
-        """
-        Save to disk the current in-memory representation (string) of a configuration file to a
-        file specified as parameter.
+        # Parse authorization and build authorization into request
+        authdef: Optional[AuthorizationDef] = None
+        authparams: Optional[Dict[str, Any]] = None
+        if example.get("authorization") is not None:
+            authorization, authparams = example["authorization"]
+            for cls in AuthorizationDef.__args__:
+                try:
+                    authdef = cls(val=authorization)
+                    break
+                except CannotParseError:
+                    continue
+            else:
+                raise ValueError(f"Cannot parse {authorization} for authorization.")
 
-        Parameters
-        ----------
-        filename
-            Name of the file to be saved. It can include the path.
-        """
-        with open(filename, "w") as outfile:
-            outfile.write(self._config)
+        if authdef is not None and authparams is not None:
+            authdef.build(req, authparams)
+
+        # Send out request and construct config
+        config = _create_config(req)
+
+        # Add pagination information into the config
+        pagination = example.get("pagination")
+        if pagination is not None:
+            pagdef = PaginationDef(val=pagination)
+            config.request.pagination = pagdef
+            for key in [
+                pagdef.offset_key,
+                pagdef.seek_key,
+                pagdef.limit_key,
+            ]:
+                if key is not None:
+                    config.request.params[key] = False  # pylint: disable=no-member
+
+        self.config += config
 
     def to_string(self) -> str:
-        """
-        Return the current in-memory representation (string) of a configuration file.
+        """Output the string format of the current config."""
+        return str(self.config)
 
-        Returns
-        -------
-        _config
-            String of the in-memory representation (string) of a configuration file.
+    def save(self, path: Union[str, Path]) -> None:
+        """Save the current config to a file.
+
+        Parameters
+        ----------
+        path
+            The path to the saved file, with the file extension.
         """
-        return self._config
+        path = Path(path)
+
+        with open(path, "w") as f:
+            f.write(self.to_string())
+
+
+def _create_config(req: Dict[str, Any]) -> ConfigDef:
+    resp = requests.request(
+        req["method"].lower(), req["url"], params=req["params"], headers=req["headers"],
+    )
+
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"Request to HTTP endpoint not successful: {resp.status_code}: {resp.text}"
+        )
+    payload = resp.json()
+
+    table_path = search_table_path(payload)
+
+    ret: Dict[str, Any] = {
+        "version": 1,
+        "request": {
+            "url": req["url"],
+            "method": req["method"],
+            "params": {key: False for key in req["params"]},
+        },
+        "response": {
+            "ctype": "application/json",
+            "orient": "records",
+            "tablePath": table_path,
+            "schema": gen_schema_from_path(table_path, payload),
+        },
+    }
+
+    return ConfigDef(val=ret)

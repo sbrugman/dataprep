@@ -71,7 +71,7 @@ def coalesce(  # pylint: disable=invalid-name
 
 class DefBase:
     def __new__(  # pylint: disable=unused-argument
-        cls: Type["DefBase"], *, val: Any
+        cls: Type["DefBase"], **kwargs: Any
     ) -> "DefBase":
         for attr, typ, _ in cls._field_defs():
             if hasattr(typ, "__origin__") and typ.__origin__ in {dict, Dict}:
@@ -83,8 +83,14 @@ class DefBase:
 
     def __init__(self, *, val: Any) -> None:
         super().__init__()
-        if not isinstance(val, dict):
-            raise CannotParseError(f"{_fty(type(self))} expects a dict but got {val}")
+        if not isinstance(val, (dict, type(self))):
+            raise CannotParseError(
+                f"{_fty(type(self))} expects a dict or {_fty(type(self))} but got {val}"
+            )
+        if isinstance(val, type(self)):
+            self.__dict__ = deepcopy(val).__dict__
+            return
+
         val = cast(Dict[str, Any], val)
 
         for attr, typ, policy in self._field_defs():
@@ -159,8 +165,6 @@ class DefBase:
             else:
 
                 merged = merge_values(cur_value, rhs_value, attr, policy)
-                if attr == "schema":
-                    print(merged)
                 setattr(cur, attr, merged)
 
         return cur
