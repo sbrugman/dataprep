@@ -1,3 +1,4 @@
+# pylint: disable=missing-module-docstring, missing-class-docstring,missing-function-docstring,no-else-raise
 from copy import deepcopy
 from typing import (
     Any,
@@ -15,7 +16,7 @@ from typing import (
 
 from stringcase import camelcase, snakecase
 
-T = TypeVar("T")
+T = TypeVar("T")  # pylint: disable=invalid-name
 
 
 class Field(Generic[T]):
@@ -59,7 +60,9 @@ def field(
     return cast(T, Field(default=default, merge=merge, case=case, allows=allows))
 
 
-def coalesce(a: Optional[T], b: Optional[T]) -> Optional[T]:
+def coalesce(  # pylint: disable=invalid-name
+    a: Optional[T], b: Optional[T]
+) -> Optional[T]:
     if a is None:
         return b
     else:
@@ -67,35 +70,43 @@ def coalesce(a: Optional[T], b: Optional[T]) -> Optional[T]:
 
 
 class DefBase:
-    def __new__(cls: Type["DefBase"], *args: Any, **kwargs: Any) -> "DefBase":
-        for attr, ty, _ in cls._field_defs():
-            if hasattr(ty, "__origin__") and ty.__origin__ in {dict, Dict}:
-                key_t, _ = ty.__args__
+    def __new__(  # pylint: disable=unused-argument
+        cls: Type["DefBase"], *, val: Any
+    ) -> "DefBase":
+        for attr, typ, _ in cls._field_defs():
+            if hasattr(typ, "__origin__") and typ.__origin__ in {dict, Dict}:
+                key_t, _ = typ.__args__
                 if key_t != str:
                     raise RuntimeError(f"{attr} must have str as the Dict key.")
 
         return super().__new__(cls)
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *, val: Any) -> None:
         super().__init__()
-        if args:
-            raise ValueError(f"args not supported.")
+        if not isinstance(val, dict):
+            raise CannotParseError(f"{_fty(type(self))} expects a dict but got {val}")
+        val = cast(Dict[str, Any], val)
 
-        for attr, ty, policy in self._field_defs():
+        for attr, typ, policy in self._field_defs():
             if policy.case == "snake":
-                target_attr = snakecase(attr)
+                target_attr: str = snakecase(attr)
             elif policy.case == "camel":
                 target_attr = camelcase(attr)
             else:
                 raise RuntimeError(f"Unknown case {policy.case}.")
 
-            val = kwargs.get(target_attr, policy.default)
-            if policy.allows is not None and val not in policy.allows:
+            val_ = val.get(target_attr, policy.default)
+            if policy.allows is not None and val_ not in policy.allows:
                 raise CannotParseError(
-                    f"{target_attr} has value {val}, which is not in {policy.allows}"
+                    f"{target_attr} has value {val_}, which is not in {policy.allows}"
                 )
 
-            setattr(self, attr, instantiate_from_value(attr, ty, val))
+            setattr(self, attr, instantiate_from_value(attr, typ, val_))
+
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        pass
 
     def __str__(self) -> str:
         return str(self.to_value())
@@ -104,19 +115,19 @@ class DefBase:
         return str(self)
 
     @classmethod
-    def _field_defs(cls) -> Iterator[Tuple[str, T, Field[T]]]:
-        for attr, ty in cls.__dict__.get("__annotations__", {}).items():
+    def _field_defs(cls) -> Iterator[Tuple[str, Any, Field[Any]]]:
+        for attr, typ in cls.__dict__.get("__annotations__", {}).items():
             policy = cls.__dict__.get(attr)
             if policy is None:
-                raise RuntimeError(f"{attr} is not attached with a Policy.")
-            yield attr, ty, policy
+                continue
+            yield attr, typ, policy
 
     def to_value(self) -> Any:
         ret = {}
 
         for attr, _, policy in self._field_defs():
             if policy.case == "snake":
-                target_attr = snakecase(attr)
+                target_attr: str = snakecase(attr)
             elif policy.case == "camel":
                 target_attr = camelcase(attr)
             else:
@@ -128,8 +139,8 @@ class DefBase:
 
         return ret
 
-    def merge(self, rhs: "DefBase") -> "DefBase":
-        if type(self) != type(rhs):
+    def merge(self, rhs: Any) -> "DefBase":
+        if not isinstance(rhs, type(self)):
             raise ValueError(f"Cannot merge {type(self)} with {type(rhs)}")
 
         cur = deepcopy(self)
@@ -155,10 +166,12 @@ class DefBase:
         return cur
 
 
-def merge_values(lhs: T, rhs: T, attr: str, policy: Field[T]) -> T:
+def merge_values(  # pylint: disable=too-many-branches
+    lhs: T, rhs: T, attr: str, policy: Field[T]
+) -> T:
     """merge two not none values."""
 
-    if type(lhs) != type(rhs):
+    if not isinstance(rhs, type(lhs)):
         raise ValueError(
             f"Cannot merge {type(lhs)} with {type(rhs)} for {type(lhs).__name__}.{attr}"
         )
@@ -186,58 +199,70 @@ def merge_values(lhs: T, rhs: T, attr: str, policy: Field[T]) -> T:
         else:
             raise RuntimeError(f"Unknown merge policy {policy.merge}.")
     else:
-        raise RuntimeError(f"Unknown type {type(lhs)}.")
+        raise RuntimeError(f"Unknown type {type(lhs).__name__}.")
 
 
-def instantiate_from_value(attr: str, ty: Type[T], val: Any) -> T:
-    if hasattr(ty, "__origin__"):  # typing types
-        if ty.__origin__ == Union:
-            for subty in ty.__args__:
+def instantiate_from_value(  # pylint: disable=too-many-branches
+    attr: str, typ: Type[T], val: Any
+) -> T:
+    if hasattr(typ, "__origin__"):  # typing types
+        if typ.__origin__ == Union:
+            for subty in typ.__args__:
                 try:
                     return instantiate_from_value(attr, subty, val)
                 except CannotParseError:
                     continue
-            else:
-                raise ValueError(f"No compatable type for {val}. Tried: {ty.__args__}")
-        elif ty.__origin__ == dict:  # Dict
-            if not isinstance(val, dict):
-                raise CannotParseError(f"{ty} expects a dict but val is {type(val)}")
-            _, ty = ty.__args__
+            raise ValueError(
+                f"No compatable type for {attr}: {_fty(typ)} with value {val}."
+            )
 
-            instantiated = {
-                key: instantiate_from_value(f"{attr}.{key}", ty, val)
-                for key, val in val.items()
+        if typ.__origin__ == dict:  # Dict
+            if not isinstance(val, dict):
+                raise CannotParseError(f"{attr}: {_fty(typ)} expected but val is {val}")
+
+            _, typ = typ.__args__
+
+            instantiated: T = {
+                key: instantiate_from_value(f"{attr}.{key}", typ, val_)
+                for key, val_ in val.items()
             }
             return instantiated
-    elif issubclass(ty, DefBase):
-        if not isinstance(val, dict):
-            raise CannotParseError(f"{ty} expects a dict but val is {type(val)}")
 
-        return ty(**val)
-
-    elif ty == type(val):
+        raise NotImplementedError(typ)
+    elif issubclass(typ, DefBase):
+        return typ(val=val)
+    elif typ == type(val):
         return cast(T, val)
-    elif ty is None:
-        if val is None:
-            return val
-        else:
-            raise CannotParseError(f"{ty} expects None but val is {type(val)}")
+    elif typ is None:
+        if val is not None:
+            raise CannotParseError(f"{attr}:{_fty(typ)} expects None but val is {val}")
+        return val
     else:
-        raise CannotParseError(f"{ty} expected but got {type(val)}.")
+        raise CannotParseError(f"{attr}: {_fty(typ)} expected but got {val}.")
 
 
-def to_value(v: Any) -> Any:
-    if isinstance(v, (bool, int, float, str)):
-        return v
-    elif isinstance(v, dict):
-        return {key: to_value(value) for key, value in v.items()}
-    elif isinstance(v, list):
-        return [value for value in v]
-    elif isinstance(v, DefBase):
-        return v.to_value()
+def to_value(val: Any) -> Any:
+    if isinstance(val, (bool, int, float, str)):
+        return val
+    elif isinstance(val, dict):
+        return {key: to_value(value) for key, value in val.items()}
+    elif isinstance(val, list):
+        return val
+    elif isinstance(val, DefBase):
+        return val.to_value()
     else:
-        raise ValueError(f"{type(v)} not supported.")
+        raise ValueError(f"{type(val)} not supported.")
+
+
+def _fty(typ: Type[T]) -> str:
+    if hasattr(typ, "__origin__"):
+        return str(typ)
+    elif typ is None:
+        return str(None)
+    else:
+        return typ.__name__
 
 
 class CannotParseError(Exception):
-    pass
+    """Cannot parse the def. Raise this for Union
+    will try the parser the next type."""

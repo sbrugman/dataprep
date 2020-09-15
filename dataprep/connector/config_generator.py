@@ -105,7 +105,7 @@ class ConfigGenerator:
         self._request_example = request_example
         try:
             request_full_url = re.search(
-                "(?P<url>https?://[^\s]+)", self._request_example
+                r"(?P<url>https?://[^\s]+)", self._request_example
             ).group("url")
         except Exception:
             raise RuntimeError(
