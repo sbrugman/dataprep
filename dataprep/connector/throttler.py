@@ -62,9 +62,10 @@ class Throttler:
     requiring them a seq number
     """
 
-    req_per_window: int
-    window: float
-    retry_interval: float
+    _req_per_window: int
+    _window: float
+    _retry_interval: float
+    _backoff_n: int = 0
     _task_logs: Deque[float]
     _running_tasks: Set[UUID]
 
@@ -72,9 +73,9 @@ class Throttler:
         self, req_per_window: int, window: float = 1.0, retry_interval: float = 0.01
     ):
         """Create a throttler."""
-        self.req_per_window = req_per_window
-        self.window = window
-        self.retry_interval = retry_interval
+        self._req_per_window = req_per_window
+        self._window = window
+        self._retry_interval = retry_interval
 
         self._task_logs = Deque()
         self._running_tasks = set()
@@ -83,7 +84,7 @@ class Throttler:
         """Clear tasks that are out of the window."""
         now = time.time()
         while self._task_logs:
-            if now - self._task_logs[0] > self.window:
+            if now - self._task_logs[0] > self._window:
                 self._task_logs.popleft()
             else:
                 break
@@ -109,36 +110,66 @@ class Throttler:
         """returns an ordered throttler session"""
         return OrderedThrottleSession(self)
 
+    @property
+    def retry_interval(self) -> int:
+        return self._retry_interval
+
+    @property
+    def req_per_window(self) -> int:
+        return max(self._req_per_window - 2 ** self._backoff_n, 1)
+
+    def backoff(self) -> None:
+        self._backoff_n += 1
+
 
 class OrderedThrottleSession:  # pylint: disable=protected-access
     """OrderedThrottleSession share a same rate throttler but
     can have independent sequence numbers."""
 
     thr: Throttler
-    seq: int = -1
-    cancelled: Set[UUID]
+    seqs: Set[int]
 
     def __init__(self, thr: Throttler) -> None:
         self.thr = thr
-        self.cancelled = set()
+        self.seqs = set()
 
     @contextlib.asynccontextmanager
     async def acquire(self, i: int) -> AsyncIterator[Callable[[], None]]:
         """Wait for the request being allowed to send out,
         without violating the # reqs/sec constraint and the order constraint."""
-        if self.seq >= i:
-            raise RuntimeError(f"{i} already acquired")
-
         while (
-            self.thr.ntasks_in_window() >= self.thr.req_per_window or self.seq != i - 1
+            self.thr.ntasks_in_window() >= self.thr.req_per_window
+            or self.next_seq() != i
         ):
             await asyncio.sleep(self.thr.retry_interval)
             self.thr.flush()
 
-        self.seq = i
+        self.seqs.add(i)
         task_id = uuid4()
         self.thr.running(task_id)
+        cancelled = False
 
-        yield lambda: self.cancelled.add(task_id)
+        def cancel() -> None:
+            nonlocal cancelled
+            cancelled = True
+            self.seqs.remove(i)
 
-        self.thr.finish(task_id, task_id in self.cancelled)
+        yield cancel
+
+        self.thr.finish(task_id, cancelled)
+
+    def next_seq(self) -> int:
+        if not self.seqs:
+            return 0
+
+        for i in range(max(self.seqs) + 2):
+            if i not in self.seqs:
+                return i
+        raise RuntimeError("Unreachable")
+
+    def backoff(self) -> None:
+        self.thr.backoff()
+
+    @property
+    def req_per_window(self) -> int:
+        return self.thr.req_per_window

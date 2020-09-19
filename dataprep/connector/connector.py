@@ -65,6 +65,7 @@ class Connector:
     _auth: Dict[str, Any]
     _concurrency: int
     _jenv: Environment
+    _throttler: Throttler
 
     def __init__(
         self,
@@ -97,7 +98,6 @@ class Connector:
         table: str,
         _auth: Optional[Dict[str, Any]] = None,
         _count: Optional[int] = None,
-        _concurrency: Optional[int] = None,
         **where: Any,
     ) -> Union[Awaitable[pd.DataFrame], pd.DataFrame]:
         """
@@ -365,34 +365,34 @@ class Connector:
                 raise UniversalParameterOverridden(cursor_key, "_cursor")
             req_data["params"][cursor_key] = _cursor
 
-        async with _throttler.acquire(_page) as cancel:
-
-            if _allowed_page is not None and int(_allowed_page) <= _page:
-                # cancel current throttler counter since the request is not sent out
-                cancel()
-                return None
-
-            # TODO: put the following code into a for loop
-            # TODO: wait on the Event
-            # TODO: detect resp.status, if 429, reset Event,
-            # TODO: spawn a task to enable the Event with exponential backoff, continue the loop
-            async with _client.request(
-                method=method,
-                url=url,
-                headers=req_data["headers"],
-                params=req_data["params"],
-                json=req_data.get("json"),
-                data=req_data.get("data"),
-                cookies=req_data["cookies"],
-            ) as resp:
-                if resp.status != 200:
-                    raise RequestError(
-                        status_code=resp.status, message=await resp.text()
-                    )
-                df = table.from_response(await resp.text())
-
-                if len(df) == 0 and _allowed_page is not None and _page is not None:
-                    _allowed_page.set(_page)
+        while True:
+            async with _throttler.acquire(_page) as cancel:
+                if _allowed_page is not None and int(_allowed_page) <= _page:
+                    # cancel current throttler counter since the request is not sent out
+                    cancel()
                     return None
-                else:
-                    return df
+
+                async with _client.request(
+                    method=method,
+                    url=url,
+                    headers=req_data["headers"],
+                    params=req_data["params"],
+                    json=req_data.get("json"),
+                    data=req_data.get("data"),
+                    cookies=req_data["cookies"],
+                ) as resp:
+                    if resp.status != 200:
+                        if resp.status == 429:
+                            cancel()
+                            _throttler.backoff()
+                            continue
+                        raise RequestError(
+                            status_code=resp.status, message=await resp.text()
+                        )
+                    df = table.from_response(await resp.text())
+
+                    if len(df) == 0 and _allowed_page is not None and _page is not None:
+                        _allowed_page.set(_page)
+                        return None
+                    else:
+                        return df
